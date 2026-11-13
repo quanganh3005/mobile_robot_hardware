@@ -1,0 +1,253 @@
+#include <Arduino.h>
+#include "config.h"
+#include "motor.h"
+#include "encoder.h"
+#include "pid.h"
+#include "kinematics.h"
+
+/* ================= HARDWARE ================= */
+
+Encoder enc_L(
+    MOTOR1_ENCODER_A,
+    MOTOR1_ENCODER_B,
+    COUNTS_PER_REV1,
+    MOTOR1_ENCODER_INV
+);
+
+Encoder enc_R(
+    MOTOR2_ENCODER_A,
+    MOTOR2_ENCODER_B,
+    COUNTS_PER_REV2,
+    MOTOR2_ENCODER_INV
+);
+
+Motor mot_L(
+    PWM_FREQUENCY, PWM_BITS,
+    MOTOR1_INV,
+    MOTOR1_PWM,
+    MOTOR1_IN_A,
+    MOTOR1_IN_B
+);
+
+Motor mot_R(
+    PWM_FREQUENCY, PWM_BITS,
+    MOTOR2_INV,
+    MOTOR2_PWM,
+    MOTOR2_IN_A,
+    MOTOR2_IN_B
+);
+
+PID pid_L(PWM_MIN, PWM_MAX, K_P_1, K_I_1, K_D_1);
+PID pid_R(PWM_MIN, PWM_MAX, K_P_2, K_I_2, K_D_2);
+
+Kinematics kinematics(
+    Kinematics::DIFFERENTIAL_DRIVE,
+    MOTOR_MAX_RPM,
+    MAX_RPM_RATIO,
+    MOTOR_OPERATING_VOLTAGE,
+    MOTOR_POWER_MAX_VOLTAGE,
+    WHEEL_DIAMETER,
+    LR_WHEELS_DISTANCE
+);
+
+/* ================= STATE ================= */
+
+enum Mode {
+    MODE_IDLE,
+    MODE_SPIN,
+    MODE_TICKS,
+    MODE_PID_TEST
+};
+
+Mode current_mode = MODE_IDLE;
+unsigned long mode_start_us = 0;
+
+/* ================= CONFIG ================= */
+
+constexpr unsigned long SAMPLE_TIME_US = 20UL * 1000000UL;
+constexpr unsigned long CTRL_PERIOD_US  = 10000; // 100 Hz
+
+constexpr int PWM_SPIN_TEST  = PWM_MAX;
+constexpr int PWM_TICKS_TEST = 150;
+
+/* ================= UTILS ================= */
+
+void stopMotors()
+{
+    mot_L.brake();
+    mot_R.brake();
+}
+
+void resetAll()
+{
+    pid_L.reset();
+    pid_R.reset();
+    enc_L.write(0);
+    enc_R.write(0);
+}
+
+/* ================= SERIAL ================= */
+
+String cmd;
+
+void readSerial()
+{
+    static String cmd = "";
+
+    while (Serial.available())
+    {
+        char c = Serial.read();
+        Serial.print(c);  // echo
+
+        if (c == '\n')
+            continue;
+
+        if (c == '\r')
+        {
+            cmd.trim();
+            cmd.toLowerCase();
+            Serial.println();
+
+            if (cmd == "spin")
+            {
+                Serial.println("CMD = spin");
+                current_mode = MODE_SPIN;
+                mode_start_us = micros();
+                enc_L.write(0);
+                enc_R.write(0);
+            }
+            else if (cmd == "sample")
+            {
+                Serial.println("CMD = sample");
+                current_mode = MODE_PID_TEST;
+                mode_start_us = micros();
+            }
+            else if (cmd == "ticks")
+            {
+                Serial.println("CMD = ticks");
+                current_mode = MODE_TICKS;
+                mode_start_us = micros();
+                enc_L.write(0);
+                enc_R.write(0);
+            }
+            else if (cmd == "test")
+            {
+                Serial.println("CMD = test");
+                current_mode = MODE_PID_TEST;
+                mode_start_us = micros();
+            }
+            else if (cmd.length() > 0)
+            {
+                Serial.print("Unknown command: ");
+                Serial.println(cmd);
+            }
+
+            cmd = "";
+        }
+        else
+        {
+            cmd += c;
+        }
+    }
+}
+
+/* ================= SETUP ================= */
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(1000);
+
+    Serial.println("\n=== CALIBRATION FIRMWARE (CLEAN) ===");
+    Serial.println("Robot MUST be ELEVATED");
+    Serial.println("");
+    Serial.println("Commands:");
+    Serial.println("  spin   -> spin motors at max PWM");
+    Serial.println("  ticks  -> count encoder ticks");
+    Serial.println("  test   -> PID velocity test");
+    Serial.println("");
+}
+
+/* ================= LOOP ================= */
+
+void loop()
+{
+    readSerial();
+
+    if (current_mode == MODE_IDLE)
+        return;
+
+    unsigned long now = micros();
+
+    /* ===== STOP AFTER SAMPLE TIME ===== */
+    if (now - mode_start_us >= SAMPLE_TIME_US)
+    {
+        stopMotors();
+
+        if (current_mode == MODE_TICKS)
+        {
+            Serial.println("\n=== TICKS RESULT ===");
+            Serial.print("LEFT : ");  Serial.println(enc_L.read());
+            Serial.print("RIGHT: ");  Serial.println(enc_R.read());
+        }
+
+        Serial.println("=== DONE ===\n");
+        current_mode = MODE_IDLE;
+        return;
+    }
+
+    /* ===== MODE LOGIC ===== */
+
+    switch (current_mode)
+    {
+    case MODE_SPIN:
+        mot_L.spin(PWM_SPIN_TEST);
+        mot_R.spin(PWM_SPIN_TEST);
+        break;
+
+    case MODE_TICKS:
+        mot_L.spin(PWM_TICKS_TEST);
+        mot_R.spin(PWM_TICKS_TEST);
+        break;
+
+    case MODE_PID_TEST:
+    {
+        static unsigned long last_ctrl = 0;
+        if (now - last_ctrl < CTRL_PERIOD_US)
+            break;
+        last_ctrl = now;
+
+        float vx = 0.3; // m/s
+        auto rpm = kinematics.getRPM(vx, 0.0, 0.0);
+
+        float rpm_L = enc_L.getRPM();
+        float rpm_R = enc_R.getRPM();
+
+        int pwm_L = pid_L.compute(rpm.motor1, rpm_L);
+        int pwm_R = pid_R.compute(rpm.motor2, rpm_R);
+
+        mot_L.spin(pwm_L);
+        mot_R.spin(pwm_R);
+
+        Serial.print("L: ");
+        Serial.print(rpm_L);
+        Serial.print(" / ");
+        Serial.print(rpm.motor1);
+        Serial.print(" pwm=");
+        Serial.print(pwm_L);
+
+        Serial.print(" | R: ");
+        Serial.print(rpm_R);
+        Serial.print(" / ");
+        Serial.print(rpm.motor2);
+        Serial.print(" pwm=");
+        Serial.println(pwm_R);
+    }
+    break;
+
+    default:
+        break;
+    }
+
+    delay(100);
+}

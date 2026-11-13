@@ -1,0 +1,103 @@
+#include <Arduino.h>
+#include "config.h"
+#include "motor.h"
+#include "encoder.h"
+#include <sTune.h>
+
+// === CẤU HÌNH ===
+#define TUNE_LEFT_MOTOR  true
+#define TUNE_RIGHT_MOTOR false
+
+// User Settings (Theo đúng mẫu Example)
+uint32_t settleTimeSec = 3;      // Thời gian chờ ổn định (đứng yên)
+uint32_t testTimeSec = 10;        // Thời gian chạy test (Step)
+const uint16_t samples = 500;    // Số mẫu đo
+const float inputSpan = 200.0;   // Max RPM dự kiến
+const float outputSpan = 255.0;  // Max PWM
+float outputStart = 0.0;         // PWM bắt đầu
+float outputStep = 200.0;        // PWM kích thử (Step Value)
+
+// === PHẦN CỨNG ===
+Encoder left_encoder(MOTOR1_ENCODER_A, MOTOR1_ENCODER_B, COUNTS_PER_REV1, MOTOR1_ENCODER_INV);
+Encoder right_encoder(MOTOR2_ENCODER_A, MOTOR2_ENCODER_B, COUNTS_PER_REV2, MOTOR2_ENCODER_INV);
+Motor left_motor(PWM_FREQUENCY, PWM_BITS, MOTOR1_INV, MOTOR1_PWM, MOTOR1_IN_A, MOTOR1_IN_B);
+Motor right_motor(PWM_FREQUENCY, PWM_BITS, MOTOR2_INV, MOTOR2_PWM, MOTOR2_IN_A, MOTOR2_IN_B);
+
+// Biến liên kết với sTune
+float Input, Output; 
+float Kp, Ki, Kd; // Biến lưu kết quả
+
+// Khởi tạo sTune
+// ZN_PID: Ziegler-Nichols PID
+// direct5T: Test toàn phần (5 Time Constants) để lấy số chính xác nhất
+// printSUMMARY: Chỉ in kết quả cuối cùng
+sTune tuner = sTune(&Input, &Output, sTune::ZN_PID, sTune::direct5T, sTune::printSUMMARY);
+
+void setup() {
+    Serial.begin(115200);
+    while (!Serial) delay(10);
+    delay(2000);
+    
+    Serial.println("=== STUNE STATE MACHINE MODE ===");
+    Serial.println("Based on: Examples_MAX31856_PTC_SSR");
+    
+    left_encoder.write(0);
+    right_encoder.write(0);
+
+    // Cấu hình sTune (Nó sẽ tự tính Sample Time = testTimeSec / samples)
+    tuner.Configure(inputSpan, outputSpan, outputStart, outputStep, testTimeSec, settleTimeSec, samples);
+}
+
+void loop() {
+    // tuner.Run() trả về trạng thái hiện tại, ta dùng switch để xử lý
+    switch (tuner.Run()) {
+        
+        // CASE 1: ĐANG LẤY MẪU (Chạy liên tục trong quá trình Test)
+        case sTune::sample: 
+            // 1. Đọc RPM mới nhất
+            if (TUNE_LEFT_MOTOR) Input = left_encoder.getRPM();
+            else Input = right_encoder.getRPM();
+            
+            // 2. Điều khiển Motor theo Output mà sTune đã tính toán (Step)
+            if (TUNE_LEFT_MOTOR) {
+                left_motor.spin((int)Output);
+                right_motor.spin(0);
+            } else {
+                right_motor.spin((int)Output);
+                left_motor.spin(0);
+            }
+            
+            // 3. (Tùy chọn) In plotter để vẽ đồ thị nếu thích
+            // tuner.plotter(Input, Output, outputStep, 1.0f, 3); 
+            break;
+
+        // CASE 2: ĐÃ TUNE XONG (Chạy đúng 1 lần duy nhất khi kết thúc)
+        case sTune::tunings:
+            // Dừng motor ngay lập tức
+            left_motor.spin(0);
+            right_motor.spin(0);
+            
+            // Lấy kết quả vào biến
+            tuner.GetAutoTunings(&Kp, &Ki, &Kd);
+            
+            Serial.println("\n\n====== KET QUA STUNE (SUCCESS) ======");
+            Serial.print("#define K_P "); Serial.println(Kp, 5);
+            Serial.print("#define K_I "); Serial.println(Ki, 5);
+            Serial.print("#define K_D "); Serial.println(Kd, 5);
+            Serial.println("=====================================");
+            
+            Serial.print("MAX RPM DO DUOC: "); Serial.println(Input);
+            
+            // Treo chương trình luôn để bạn copy
+            while(1); 
+            break;
+
+        // CASE 3: CHẠY THỬ PID (Sau khi tune xong)
+        case sTune::runPid:
+            // Ở ví dụ gốc, họ chạy tiếp PID. 
+            // Nhưng với mục đích của bạn là lấy số Kp,Ki,Kd copy vào config,
+            // nên ta không cần chạy case này.
+            // Nếu muốn test thử thì code thêm QuickPID vào đây.
+            break;
+    }
+}

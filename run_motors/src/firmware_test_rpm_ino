@@ -1,0 +1,80 @@
+#include <Arduino.h>
+#include "config.h"
+#include "motor.h"
+#include "encoder.h"
+
+/* ===== Hardware ===== */
+
+Encoder left_encoder(
+    MOTOR1_ENCODER_A,
+    MOTOR1_ENCODER_B,
+    COUNTS_PER_REV1,
+    MOTOR1_ENCODER_INV
+);
+
+Encoder right_encoder(
+    MOTOR2_ENCODER_A,
+    MOTOR2_ENCODER_B,
+    COUNTS_PER_REV2,
+    MOTOR2_ENCODER_INV
+);
+
+Motor left_motor(
+    PWM_FREQUENCY,
+    PWM_BITS,
+    MOTOR1_INV,
+    MOTOR1_PWM,
+    MOTOR1_IN_A,
+    MOTOR1_IN_B
+);
+
+Motor right_motor(
+    PWM_FREQUENCY,
+    PWM_BITS,
+    MOTOR2_INV,
+    MOTOR2_PWM,
+    MOTOR2_IN_A,
+    MOTOR2_IN_B
+);
+
+/* ===== RPM sampling ===== */
+
+const int TEST_PWM = 250;
+const unsigned long RPM_PERIOD_US = 100000; // 100 ms
+unsigned long last_rpm_time = 0;
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(1000);
+
+    Serial.println("=== FIXED PWM RPM TEST ===");
+    Serial.println("Robot must be ELEVATED!");
+
+    left_encoder.write(0);
+    right_encoder.write(0);
+
+    last_rpm_time = micros();
+}
+
+void loop()
+{
+    unsigned long now = micros();
+    if (now - last_rpm_time < RPM_PERIOD_US)
+        return;
+
+    last_rpm_time = now;
+
+    // Spin motors with fixed PWM
+    left_motor.spin(TEST_PWM);
+    right_motor.spin(TEST_PWM);
+
+    // Measure RPM (CALL ONCE)
+    float left_rpm  = left_encoder.getRPM();
+    float right_rpm = right_encoder.getRPM();
+
+    Serial.print("L rpm: ");
+    Serial.print(left_rpm);
+    Serial.print(" | R rpm: ");
+    Serial.println(right_rpm);
+}

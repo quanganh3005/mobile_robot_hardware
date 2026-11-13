@@ -1,0 +1,23 @@
+I/ MOTORS
+1. cd my_linorobot2_hardware/test_motors
+pio run -e myrobot -t upload
+pio device monitor -b 115200
+
+
+II/ IMU
+1. cd my_linorobot2_hardware/test_imu
+pio run -e myrobot -t upload
+pio device monitor -b 115200
+
+ros2 run imu_calib do_calib_node --ros-args -r /imu:=/imu/data
+
+ros2 run imu_calib apply_calib_node   --ros-args   -r /raw:=/imu/data   -r /corrected:=/imu/data_calib   -p calib_file:=/home/picasso/imu_calib/imu_calib.yaml
+
+cd ~/my_linorobot2_hardware/firmware
+pio run -e myrobot -t upload
+
+III/ TUNE PID TREN SAN (2 BANH CO TAI 1.3KG)
+cd ~/my_linorobot2_hardware/pid_tune_web
+pio run -e myrobot -t upload
+# Ket noi dien thoai vao WiFi: Linorobot2_PID_Tune (pass: 12345678)
+# Mo trinh duyet: http://192.168.4.1

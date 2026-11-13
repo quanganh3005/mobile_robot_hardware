@@ -1,0 +1,38 @@
+		Các bước thực hiện chuẩn (Dành cho chip trùng Serial)
+	Bước 1: Lấy địa chỉ ID_PATH chuẩn Bác dùng lệnh này để xem "địa chỉ nhà" của các cổng USB:
+	
+Bash
+
+ls -l /dev/serial/by-path/
+Ghi chú: Mã pci-0000:04:00.3-usb-0:2:1.0 (cho ESP32) và pci-0000:04:00.3-usb-0:1:1.0 (cho Lidar).
+
+	Bước 2: Sửa file Rule Mở file:
+sudo nano /etc/udev/rules.d/99-linorobot2.rules
+sudo gedit /etc/udev/rules.d/99-linorobot2.rules
+	Dán nội dung này vào (đây là bản bác đã test chạy, đã xóa -port0):
+
+	PC
+# Cổng USB 2:1.0 dành cho ESP32 (LinoBase)
+ACTION=="add", SUBSYSTEM=="tty", ENV{ID_PATH}=="pci-0000:04:00.3-usb-0:2:1.0", SYMLINK+="linobase", MODE="0666"
+
+# Cổng USB 1:1.0 dành cho Lidar (RPLidar)
+ACTION=="add", SUBSYSTEM=="tty", ENV{ID_PATH}=="pci-0000:04:00.3-usb-0:1:1.0", SYMLINK+="rplidar", MODE="0666"
+
+	Pi4
+# Thiết bị linobase (ESP32) - Cổng 1.1 (Cổng USB-A 3.0 trên)
+ACTION=="add", SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0", SYMLINK+="linobase", MODE="0666"
+
+# Thiết bị rplidar (Lidar) - Cổng 1.3 (Cổng USB-A 2.0 trên)
+ACTION=="add", SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3:1.0", SYMLINK+="rplidar", MODE="0666"
+
+	Bước 3: Kích hoạt hệ thống Chạy lệnh để Linux "ăn" cấu hình mới:
+Bash
+
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+Cố định lỗ cắm: Vì định danh theo cổng vật lý, nên từ giờ phải cắm đúng lỗ. Lỗ nào dành cho ESP32 thì mãi mãi phải cắm ESP32, cắm sang lỗ bên cạnh nó sẽ biến thành Lidar ngay.
+
+	Bước 4: Kiểm tra lại lần cuối
+Gõ: 
+ls -l /dev/linobase /dev/rplidar
+Nếu nó hiện: ... /dev/linobase -> ttyUSB0 là bác đã thắng lợi hoàn toàn.

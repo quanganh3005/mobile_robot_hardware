@@ -1,0 +1,23 @@
+#include <Arduino.h>
+#include <WiFi.h>
+
+void setup() {
+  Serial.begin(115200);
+
+  // 1. Xóa sạch thông tin WiFi cũ đã lưu (nếu có)
+  // true đầu tiên = tắt WiFi
+  // true thứ hai = xóa cấu hình trong Flash (NVS)
+  WiFi.disconnect(true, true); 
+  
+  // 2. Ép chế độ WiFi về OFF hoàn toàn
+  WiFi.mode(WIFI_OFF);
+  
+  // (Tùy chọn) Tắt luôn Bluetooth
+  btStop();
+
+  Serial.println("ESP32 is running in PURE PROCESSING mode (No Radio)");
+}
+
+void loop() {
+  // Code xử lý chính...
+}
